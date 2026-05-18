@@ -1,0 +1,55 @@
+[project]
+name = "PDNR"
+version = "0.1.0"
+description = "PDNR is a base project that helps you manage your projects and tasks with Django and Next.js"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=6.0.5",
+    "django-environ>=0.11",
+    "asgiref>=3.7",
+    "sqlparse>=0.5",
+    "psycopg2-binary>=2.9",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "jupyter>=1.0",
+    "django-extensions>=3.2",
+    "ipython>=8.0",
+    "tqdm>=4.66",
+    "temporalio>=1.0",
+    "aiohttp>=3.9",
+    "openai>=1.0",
+    "celery[redis]>=5.3",
+    "flower==2.0.1",
+    "django-celery-beat>=2.5",
+    "redis[hiredis]>=5.0",
+    "notebook>=7.2",
+    "pyzmq>=26.0.0",
+    "black>=24.0",
+    "djangorestframework>=3.14",
+    "djangorestframework-simplejwt>=5.3",
+    "django-cors-headers>=4.3",
+    "gunicorn>=21.0",
+    "drf-spectacular>=0.27",
+    "django-oauth-toolkit>=2.3",
+    "sendgrid>=6.10",
+    "requests>=2.31",
+    "sentry-sdk[django]>=2.0",
+]
+
+[dependency-groups]
+dev = ["pytest>=7.0", "pytest-django>=4.5"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+only-include = ["manage.py"]
+
+[project.scripts]
+manage = "manage:main"
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = "PDNR.settings"

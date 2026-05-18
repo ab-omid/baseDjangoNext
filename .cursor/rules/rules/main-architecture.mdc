@@ -1,0 +1,87 @@
+---
+alwaysApply: true
+---
+
+# Main Architecture and Development Workflow
+
+## Mandatory Pre-Coding Workflow
+
+**Every task follows this sequence — no exceptions:**
+
+### Step 1 — Read first
+Before writing a single line of code, read all relevant existing files:
+- The files mentioned or attached by the user
+- Any related models, handlers, controllers, tasks, or utilities
+- Existing patterns for the same type of change elsewhere in the codebase
+
+### Step 2 — Identify ambiguities, then ask
+After reading, evaluate what is still unclear. Ask **before coding** if any of the following is true:
+- The requirement has more than one reasonable interpretation
+- You are unsure which existing pattern to follow
+- A design decision would meaningfully affect the implementation (e.g. where logic lives, what data is passed, whether a new method is needed)
+- The scope of the change is unclear (e.g. "update X" — update how exactly?)
+- Something is ambigous or not clear for you.
+- If you write something that is asked would break other things 
+- Asked prompt is against best practices guidelines
+
+Ask all outstanding questions in a **single message**. Do not ask one question, wait, then ask another.
+
+### Step 3 - Plan
+always plan before starting to code and write for yourself steps of implementing anything and then go to them one by one.
+
+### Step 4 — Code only after clarity
+Once you have read the code and resolved ambiguities (either by reading or by asking), write the implementation following the patterns found in the existing codebase.
+
+**Do not guess. Do not assume. Do not start coding just to show progress.**
+
+## Project Overview
+- Backend: Django REST Framework
+- Frontend: React + Next.js + TypeScript + Material-UI
+- Architecture: Controller → Handler → DataProvider pattern
+
+## Core Architecture Pattern
+
+### Request Flow (MANDATORY - rare exceptions only)
+```
+API Endpoint (Controller) 
+  ↓
+Handler (Business Logic)
+  ↓
+DataProvider (Data Access)
+  ↓
+Models (Database)
+```
+
+**Example:**
+- Controller: `app/controllers/api_controller.py` - handles HTTP request/response
+- Handler: `app/handlers/api_handler.py` - contains business logic
+- DataProvider: `app/modules/provider/data_provider.py` - database queries
+- Models: `app/models/*.py` - Django ORM models
+
+### File Organization
+```
+app/
+  controllers/     # HTTP endpoints, request validation
+  handlers/        # Business logic, authorization
+  models/          # Django models
+  modules/         # External service integrations
+    provider/      # Data access layer
+    airtable/
+    unipile/
+    openAi/
+  routes/          # URL routing
+  tasks/           # Celery background tasks
+  utils/           # Utility functions
+```
+
+## Production Standards
+- This is a **production application** - prioritize robustness and maintainability
+- No tests, README, or example usage unless explicitly requested
+- Focus on production-ready code, not exploratory projects
+- Question assumptions - don't blindly accept everything stated
+
+## Documentation Rules
+- **Do NOT generate** tests, README, or example usage unless explicitly asked
+- Use detailed Google-style docstrings for complex functions
+- Include inline comments for non-obvious logic only
+- API endpoints must have OpenAPI schemas via `@extend_schema`

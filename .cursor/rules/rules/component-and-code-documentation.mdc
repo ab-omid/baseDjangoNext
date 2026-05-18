@@ -1,0 +1,77 @@
+---
+description: Require file-level docs for UI/TS and Python so humans and AI know purpose, wiring, API contracts, and non-obvious rules.
+globs: ui/src/**/*.tsx,ui/src/**/*.ts,app/**/*.py
+alwaysApply: false
+---
+
+# Component and code documentation (new code)
+
+When **creating** or **updating** a new/existing UI component, hook, utility, API module, or Python unit, add documentation that answers **what it does**, **where it is used**, **what it depends on**, and **non-obvious behavior**. This is for **both** humans and AI-assisted tools that rely on file context.
+
+## React / TypeScript (`ui/src`)
+
+### Components (`.tsx`)
+
+Place a **file-level or export-level** `/** ... */` block. Use this shape (omit lines that add nothing):
+
+```tsx
+/**
+ * <One-line purpose>
+ *
+ * Where: <route(s), parent layout, or feature — e.g. `StreamDetails` pipelines tab>
+ * Uses: <hooks, API modules, main child components>
+ * Behavior: <user-visible behavior, loading/error, key props>
+ * Invariants: <only if non-obvious — e.g. one global pending send, HTML unsanitized>
+ */
+```
+
+- **React context providers**: add **Where mounted** (which layout/shell wraps `children`). If the provider is not re-exported from a barrel, either **export it from the feature `index.ts`** or state in the barrel comment where to import it from.
+- **JSDoc on props**: add a one-line comment on **ambiguous** props (`data`, `open`, callbacks) when the name alone is misleading; do not document every prop.
+
+### API modules (`ui/src/api/*.ts`)
+
+Every API module MUST extend the header with a **Contract** line (and **Invariants** when needed):
+
+```ts
+/**
+ * <What this module wraps>
+ *
+ * Where: <main UI consumers>
+ * Uses: `apiClient` from `./client` unless noted
+ * Contract: <HTTP methods + path patterns, e.g. GET `/leads/`, POST `/jobs/create/`; say whether the Axios body is `response.data` vs `response.data.output` vs raw `response.data` for auth token endpoints>
+ * Behavior: <pagination, serializers, blobs, etc.>
+ * Invariants: <e.g. login stores tokens via `setTokens`; list endpoints may use custom `paramsSerializer`>
+ */
+```
+
+- Prefer **accurate path prefixes** over vague “REST API”. If the backend mixes envelopes (`{ output, error, ... }`) and raw bodies, say so explicitly — this is a common source of AI/human bugs.
+- **`client.ts`**: document base URL, auth header, refresh-on-401, and redirect-to-login behavior.
+
+### Barrels (`index.ts`)
+
+- State **Uses:** re-exports only; **Behavior:** no runtime logic.
+- If an important symbol is intentionally **not** barrel-exported, add one line: **Not exported:** `…` (import from `…/Component.tsx`).
+
+### What not to do
+
+- Do not restate TypeScript types in prose.
+- Do not add long tutorials in every file; keep headers scannable.
+
+## Python (`app/`)
+
+### New modules
+
+- Module docstring after imports when the file is a cohesive unit: ownership and place in Controller → Handler → DataProvider flow when relevant.
+
+### Classes and public functions
+
+- Google-style (`Args:`, `Returns:`, `Raises:`) when non-obvious; one line for trivial private helpers.
+
+### Consistency
+
+- Align with [main-architecture.mdc](mdc:.cursor/rules/main-architecture.mdc).
+
+## When editing existing code
+
+- Do **not** mass-document unrelated files in a small fix.
+- Do **update** Contract / Where / Invariants when behavior or endpoints change (same task as the code change).

@@ -1,0 +1,152 @@
+---
+description: Critical development commands and rules to follow when writing code
+globs:
+alwaysApply: true
+---
+
+# Development Commands and Rules
+
+## CRITICAL RULES - Always Follow These
+
+### 1. Access Control Rule
+**COMMAND: Always check access control when writing functions in handler**
+
+When writing handler methods, ALWAYS implement proper access control:
+- Check if user is authenticated
+- For non-admin users, filter by their own resources (using `project_owner_uuid` or similar)
+- Use `user.is_staff or user.is_superuser` to check admin status
+- Return `cls.forbidden()` or `cls.unauthorized()` for unauthorized access
+
+Example pattern:
+```python
+if not (user.is_staff or user.is_superuser):
+    if resource.owner_uuid != user.uuid:
+        return cls.forbidden(["Access denied: You can only access your own resources"])
+```
+
+### 2. DataProvider Rule
+**COMMAND: Always use DataProvider, don't query DB directly**
+
+NEVER use direct database queries in handlers. ALWAYS use DataProvider methods:
+- Use `DataProvider.model_name()` for single objects
+- Use `DataProvider.model_names()` for lists
+- If DataProvider doesn't have the needed filter, add it to DataProvider first
+- Use Pager from DataProvider for pagination
+
+Example:
+```python
+# ❌ WRONG - Direct DB query
+pipelines = Pipeline.objects.filter(stream_id=stream_uuid)
+
+# ✅ CORRECT - Use DataProvider
+pipelines = DataProvider.pipelines(stream_uuid=stream_uuid)
+```
+
+### 3. Handler Parameters Rule
+**COMMAND: Handler methods must have explicit parameters, not data dictionaries**
+
+When writing handler methods:
+- Define explicit parameters for each field
+- Controllers parse request data and pass individual fields to handlers
+- Use `None` as default for optional parameters
+- Check `is not None` before using optional parameters
+
+Example:
+```python
+# ❌ WRONG
+def update_item(cls, user, item_uuid, data: dict):
+    if "name" in data:
+        item.name = data["name"]
+
+# ✅ CORRECT
+def update_item(cls, user, item_uuid, name: str | None = None, status: str | None = None):
+    if name is not None:
+        item.name = name
+```
+
+### 4. Controller Parsing Rule
+**COMMAND: Controllers must parse request data field by field**
+
+In controllers:
+- Extract each field individually from `request.data` or `request.GET`
+- Parse and validate types (int, bool, etc.)
+- Pass individual fields to handler methods
+- Handle parsing errors gracefully
+
+Example:
+```python
+name = request.data.get('name')
+status = request.data.get('status')
+active_hours_from = request.data.get('active_hours_from')
+if active_hours_from is not None:
+    try:
+        active_hours_from = int(active_hours_from)
+    except (ValueError, TypeError):
+        active_hours_from = None
+
+return ApiHandler.update_item(
+    current_user=current_user,
+    item_uuid=item_uuid,
+    name=name,
+    status=status,
+    active_hours_from=active_hours_from,
+).json_response()
+```
+
+### 5. Route Ordering Rule
+**COMMAND: Specific routes must come before catch-all routes**
+
+In URL routing:
+- Place specific routes (like `extract-urls/`) BEFORE catch-all routes (like `""`)
+- More specific patterns should be defined first
+- Catch-all routes should be at the end
+
+Example:
+```python
+# ✅ CORRECT order
+path("extract-urls/", extract_urls, name="extract-urls"),  # Specific route first
+path("pipelines/", pipelines_list, name="pipelines-list"),   # Specific route
+path("", chats_list, name="chats-list"),                     # Catch-all last
+```
+
+### 6. Configuration Location Rule
+**COMMAND: Model-specific configurations belong in models.py**
+
+Configuration classes:
+- Model-specific configs go in `app/config/models.py`
+- Job-specific configs go in `app/config/jobs.py`
+- Use naming pattern: `{ModelName}Config`
+- Access via `from app.config.models import ModelConfig`
+
+Example:
+```python
+# In app/config/models.py
+class PipelineConfig(BaseConfig):
+    MAX_FILE_SIZE_BYTES: int = BaseConfig.env.int("MODELS_PIPELINE_MAX_FILE_SIZE_BYTES", default=100000)
+    MAX_URLS_TO_PROCESS: int = BaseConfig.env.int("MODELS_PIPELINE_MAX_URLS_TO_PROCESS", default=5000)
+```
+
+### 7. Utility Organization Rule
+**COMMAND: Extract reusable logic into utility modules**
+
+When writing handlers:
+- If logic is reusable or complex, extract to utility module
+- try to create reuseable methods in the models that does the job 
+- Keep handlers focused on orchestration, not implementation details
+
+# In handler
+from app.utils.linkedin_util import extract_linkedin_urls_from_text
+valid_urls = extract_linkedin_urls_from_text(text)
+```
+
+### 8. Always try to use object oriented approachs when creating new objects and use its abilities such as creating interfaces, mixins, overwriting methods 
+
+for example the way action_limitation is implemented for project, pipeline, stream, user with ActionLimitationMixin.
+
+## When to Reference These Rules
+
+- Before writing any handler method
+- Before writing any controller endpoint
+- Before adding database queries
+- When implementing access control
+- When organizing code structure

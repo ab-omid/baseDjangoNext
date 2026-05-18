@@ -1,0 +1,14 @@
+FROM python:3.11.9-bookworm
+
+WORKDIR /code
+
+COPY pyproject.toml uv.lock /code/
+RUN pip install --upgrade pip && \
+    pip install uv
+COPY ./ /code
+RUN uv sync --frozen --no-dev
+RUN chmod +x /code/docker/backend/entrypoint.sh
+
+ENTRYPOINT ["/code/docker/backend/entrypoint.sh"]
+CMD ["uv", "run", "gunicorn", "--bind", "0.0.0.0:80", "--workers", "32", "--timeout", "120", "PDNR.wsgi:application"]
+

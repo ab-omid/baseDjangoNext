@@ -1,0 +1,368 @@
+---
+globs: app/modules/provider/*.py,app/modules/**/*provider*.py
+---
+
+# Data Provider Patterns
+
+Reference: [app/modules/provider/data_provider.py](mdc:app/modules/provider/data_provider.py)
+
+## DataProvider Class Structure
+
+DataProvider is the **data access layer** - all database queries should go through it.
+
+```python
+from typing import Optional
+from app.models.user import User
+from app.models.project import Project
+
+class DataProvider:
+    """
+    Data access layer for the application.
+    Handles all database queries and returns typed objects.
+    """
+    
+    @classmethod
+    def user(
+        cls,
+        uuid: str | None = None,
+        email: str | None = None,
+        unipile_id: str | None = None
+    ) -> User | None:
+        """
+        Get user by UUID, email, or unipile_id.
+        
+        Args:
+            uuid: User UUID
+            email: User email
+            unipile_id: Unipile account ID
+        
+        Returns:
+            User | None: User object or None if not found
+        """
+        if uuid:
+            return User.objects.filter(uuid=uuid).first()
+        if email:
+            return User.objects.filter(email=email).first()
+        if unipile_id:
+            return User.objects.filter(unipile_id=unipile_id).first()
+        return None
+    
+    @classmethod
+    def users(
+        cls,
+        search: str | None = None,
+        page_token: str | None = None,
+        max_results: int = 10,
+    ) -> BasicList:
+        """
+        Get paginated list of users.
+        
+        Args:
+            search: Search term for filtering
+            page_token: Pagination token
+            max_results: Maximum number of results
+        
+        Returns:
+            BasicList: Paginated list of users
+        """
+        queryset = User.objects.all()
+        
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) | Q(email__icontains=search)
+            )
+        
+        # Apply pagination logic
+        # ... implementation ...
+        
+        return BasicList(
+            items=list(queryset[:max_results]),
+            next_page_token=next_token,
+            previous_page_token=prev_token,
+            total_results=total_count,
+        )
+```
+
+## Method Patterns
+
+### Single Object Retrieval
+```python
+@classmethod
+def model_name(
+    cls,
+    uuid: str | None = None,
+    other_field: str | None = None
+) -> ModelName | None:
+    """
+    Get model by UUID or other identifier.
+    
+    Args:
+        uuid: Model UUID
+        other_field: Alternative lookup field
+    
+    Returns:
+        ModelName | None: Model object or None if not found
+    """
+    if uuid:
+        return ModelName.objects.filter(uuid=uuid, deleted_at__isnull=True).first()
+    if other_field:
+        return ModelName.objects.filter(
+            other_field=other_field,
+            deleted_at__isnull=True
+        ).first()
+    return None
+```
+
+### List Retrieval with Filtering
+```python
+@classmethod
+def model_names(
+    cls,
+    owner_uuid: str | None = None,
+    status: str | None = None,
+    search: str | None = None,
+    page_token: str | None = None,
+    max_results: int = 10,
+) -> BasicList:
+    """
+    Get paginated list of models with filtering.
+    
+    Args:
+        owner_uuid: Filter by owner UUID
+        status: Filter by status
+        search: Search term
+        page_token: Pagination token
+        max_results: Maximum results per page
+    
+    Returns:
+        BasicList: Paginated list of models
+    """
+    queryset = ModelName.objects.filter(deleted_at__isnull=True)
+    
+    # Apply filters
+    if owner_uuid:
+        queryset = queryset.filter(owner__uuid=owner_uuid)
+    
+    if status:
+        queryset = queryset.filter(status=status)
+    
+    if search:
+        queryset = queryset.filter(
+            Q(name__icontains=search) | Q(description__icontains=search)
+        )
+    
+    # Order by
+    queryset = queryset.order_by('-created_at')
+    
+    # Pagination logic
+    # ... implementation ...
+    
+    return BasicList(
+        items=list(queryset[:max_results]),
+        next_page_token=next_token,
+        previous_page_token=prev_token,
+        total_results=queryset.count(),
+    )
+```
+
+## BasicList Data Structure
+
+Use `BasicList` for paginated responses:
+```python
+from pydantic import BaseModel
+
+class BasicList(BaseModel):
+    """Paginated list response."""
+    items: list
+    next_page_token: str | None = None
+    previous_page_token: str | None = None
+    total_results: int | None = None
+```
+
+## Query Patterns
+
+### Always Filter Out Soft-Deleted Records
+```python
+# Correct
+queryset = Model.objects.filter(deleted_at__isnull=True)
+
+# Also correct - using default manager
+queryset = Model.objects.all()  # BaseModel manager excludes deleted
+```
+
+### Complex Filters
+```python
+from django.db.models import Q
+
+# Multiple conditions
+queryset = Model.objects.filter(
+    Q(status=Model.STATUSES.ACTIVE) | Q(status=Model.STATUSES.PENDING),
+    deleted_at__isnull=True,
+    owner__uuid=owner_uuid
+)
+
+# With related objects
+queryset = Model.objects.filter(
+    related_model__field=value,
+    deleted_at__isnull=True
+).select_related('related_model')  # Optimize joins
+```
+
+### Prefetch Related Objects
+```python
+# Use select_related for ForeignKey and OneToOne
+queryset = Project.objects.select_related('owner').filter(deleted_at__isnull=True)
+
+# Use prefetch_related for ManyToMany and reverse ForeignKey
+queryset = Project.objects.prefetch_related('streams').filter(deleted_at__isnull=True)
+```
+
+## Pagination Implementation
+
+```python
+def paginate_queryset(
+    queryset,
+    page_token: str | None = None,
+    max_results: int = 10
+):
+    """
+    Paginate a queryset using cursor-based pagination.
+    
+    Args:
+        queryset: Django queryset to paginate
+        page_token: Base64 encoded pagination cursor
+        max_results: Number of results per page
+    
+    Returns:
+        tuple: (items, next_token, prev_token, total_count)
+    """
+    import base64
+    
+    total_count = queryset.count()
+    
+    # Decode page token if provided
+    if page_token:
+        try:
+            offset = int(base64.b64decode(page_token).decode())
+        except Exception:
+            offset = 0
+    else:
+        offset = 0
+    
+    # Get items with offset
+    items = list(queryset[offset:offset + max_results])
+    
+    # Generate next token if there are more results
+    next_token = None
+    if len(items) == max_results and offset + max_results < total_count:
+        next_offset = offset + max_results
+        next_token = base64.b64encode(str(next_offset).encode()).decode()
+    
+    # Generate previous token if not at start
+    prev_token = None
+    if offset > 0:
+        prev_offset = max(0, offset - max_results)
+        prev_token = base64.b64encode(str(prev_offset).encode()).decode()
+    
+    return items, next_token, prev_token, total_count
+```
+
+## External Service Providers
+
+For external services (Airtable, Unipile, etc.):
+```python
+class ExternalServiceProvider:
+    """Provider for external service integration."""
+    
+    @classmethod
+    def get_data(cls, param: str) -> DataModel | None:
+        """
+        Fetch data from external service.
+        
+        Args:
+            param: Query parameter
+        
+        Returns:
+            DataModel | None: Parsed data model or None
+        """
+        try:
+            response = requests.get(f"{API_URL}/{param}")
+            response.raise_for_status()
+            data = response.json()
+            return DataModel.model_validate(data)
+        except Exception as e:
+            from app.utils.log_util import LogUtil
+            logger = LogUtil.get_logger()
+            logger.error(f"Failed to fetch data: {str(e)}", extra={"code": 123456})
+            return None
+```
+
+## Naming Conventions
+
+- **Single object**: `model_name()` - returns `Model | None`
+- **Multiple objects**: `model_names()` - returns `BasicList`
+- **Specialized queries**: Use descriptive names like `get_active_users()`, `get_project_owners()`
+
+## Common Patterns
+
+### Get or Create
+```python
+@classmethod
+def get_or_create_model(cls, **kwargs) -> tuple[Model, bool]:
+    """
+    Get existing model or create new one.
+    
+    Returns:
+        tuple: (model_instance, created_flag)
+    """
+    obj, created = Model.objects.get_or_create(**kwargs)
+    return obj, created
+```
+
+### Bulk Operations
+```python
+@classmethod
+def bulk_create_models(cls, data_list: list[dict]) -> list[Model]:
+    """
+    Create multiple models in bulk.
+    
+    Args:
+        data_list: List of dictionaries with model data
+    
+    Returns:
+        list[Model]: Created model instances
+    """
+    models = [Model(**data) for data in data_list]
+    return Model.objects.bulk_create(models)
+```
+
+### Aggregations
+```python
+@classmethod
+def get_statistics(cls, owner_uuid: str | None = None) -> dict:
+    """
+    Get aggregate statistics.
+    
+    Args:
+        owner_uuid: Filter by owner
+    
+    Returns:
+        dict: Statistics dictionary
+    """
+    from django.db.models import Count, Avg
+    
+    queryset = Model.objects.filter(deleted_at__isnull=True)
+    
+    if owner_uuid:
+        queryset = queryset.filter(owner__uuid=owner_uuid)
+    
+    stats = queryset.aggregate(
+        total=Count('id'),
+        avg_value=Avg('value')
+    )
+    
+    return {
+        'total_count': stats['total'] or 0,
+        'average_value': round(stats['avg_value'] or 0, 2),
+    }
+```

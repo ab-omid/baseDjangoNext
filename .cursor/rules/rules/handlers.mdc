@@ -1,0 +1,374 @@
+---
+globs: app/handlers/*.py
+---
+
+# Handler Patterns
+
+Reference: [app/handlers/handler.py](mdc:app/handlers/handler.py), [app/handlers/api_handler.py](mdc:app/handlers/api_handler.py)
+
+## Handler Base Class
+
+All handlers **must inherit from `Handler`** class:
+```python
+from app.handlers.handler import Handler
+from app.actions.action import Action
+from app.models.user import User
+
+class ApiHandler(Handler):
+    @classmethod
+    def my_method(cls, user: User | None = None) -> Action:
+        # Implementation
+        pass
+```
+
+## Handler Method Template
+
+```python
+@classmethod
+def get_item(
+    cls,
+    user: User | None = None,
+    item_uuid: str | None = None,
+    add_statistics: bool = False,
+) -> Action:
+    """
+    Get item details by UUID.
+    
+    Args:
+        user: The authenticated user.
+        item_uuid: UUID of the item to retrieve.
+        add_statistics: Whether to include statistics in response.
+    
+    Returns:
+        Action: Action with item details or error.
+    """
+    # 1. Authentication check (ALWAYS FIRST)
+    if not user or user.is_anonymous:
+        return cls.unauthorized(["User not authenticated"])
+    
+    # 2. Parameter validation
+    if not item_uuid:
+        return cls.bad_request(["Item UUID is required"])
+    
+    # 3. Data retrieval via DataProvider
+    from app.modules.provider.data_provider import DataProvider
+    
+    item = DataProvider.item(uuid=item_uuid)
+    if not item:
+        return cls.not_found(["Item not found"])
+    
+    # 4. Authorization check
+    # Admin/staff can access everything
+    if not (user.is_staff or user.is_superuser):
+        # Regular users only access their own data
+        if not getattr(item, "owner", None) or item.owner.uuid != user.uuid:
+            return cls.forbidden(
+                ["Access denied: You can only view your own items"]
+            )
+    
+    # 5. Return successful response
+    item_dict = item.api_response(add_statistics=add_statistics)
+    return cls.action(item_dict)
+```
+
+## Required Method Structure
+
+### 1. Authentication Check (MANDATORY FIRST)
+```python
+if not user or user.is_anonymous:
+    return cls.unauthorized(["User not authenticated"])
+```
+
+### 2. Parameter Validation
+```python
+if not required_param:
+    return cls.bad_request(["Required parameter is missing"])
+
+if not valid_data:
+    return cls.bad_request(["Update data is required"])
+```
+
+### 3. Data Retrieval
+```python
+from app.modules.provider.data_provider import DataProvider
+
+item = DataProvider.item(uuid=item_uuid)
+if not item:
+    return cls.not_found(["Item not found"])
+```
+
+### 4. Authorization Check
+```python
+# Pattern: Admin/staff get full access, users get limited access
+if not (user.is_staff or user.is_superuser):
+    # Check ownership or specific permissions
+    if item.owner_uuid != user.uuid:
+        return cls.forbidden(
+            ["Access denied: You can only access your own items"]
+        )
+```
+
+### 5. Business Logic & Return
+```python
+# Perform updates, calculations, etc.
+if "status" in data:
+    item.status = data["status"]
+
+if "name" in data:
+    item.name = data["name"]
+
+# Save if anything changed
+if any(field in data for field in ["status", "name"]):
+    item.save()
+
+# Return response
+item_dict = item.api_response()
+return cls.action(item_dict)
+```
+
+## Authorization Patterns
+
+### Read Operations
+```python
+@classmethod
+def get_item(cls, user: User | None = None, item_uuid: str = None) -> Action:
+    if not user or user.is_anonymous:
+        return cls.unauthorized(["User not authenticated"])
+    
+    item = DataProvider.item(uuid=item_uuid)
+    if not item:
+        return cls.not_found(["Item not found"])
+    
+    # Admin/staff: full access
+    # Users: only their own items
+    if not (user.is_staff or user.is_superuser):
+        if item.owner_uuid != user.uuid:
+            return cls.forbidden(["Access denied: You can only view your own items"])
+    
+    return cls.action(item.api_response())
+```
+
+### Write Operations (Create, Update, Delete)
+```python
+@classmethod
+def update_item(
+    cls, user: User | None = None, item_uuid: str = None, data: dict = None
+) -> Action:
+    if not user or user.is_anonymous:
+        return cls.unauthorized(["User not authenticated"])
+    
+    if not data:
+        return cls.bad_request(["Update data is required"])
+    
+    item = DataProvider.item(uuid=item_uuid)
+    if not item:
+        return cls.not_found(["Item not found"])
+    
+    # Authorization: owners can update their items; staff/superuser can update all
+    if not (user.is_staff or user.is_superuser):
+        if not getattr(item, "owner", None) or item.owner.uuid != user.uuid:
+            return cls.forbidden(
+                ["Access denied: You can only update your own items"]
+            )
+    
+    # Whitelisted fields only
+    if "status" in data:
+        item.status = data["status"]
+    if "name" in data:
+        item.name = data["name"]
+    
+    item.save()
+    return cls.action(item.api_response())
+```
+
+### List Operations with Filtering
+```python
+@classmethod
+def list_items(
+    cls,
+    user: User | None = None,
+    search: str = None,
+    status: str = None,
+    page_token: str = None,
+    max_results: int = 10,
+) -> Action:
+    if not user or user.is_anonymous:
+        return cls.unauthorized(["User not authenticated"])
+    
+    # Admin/staff can see all items
+    # Regular users only see their own
+    if user.is_staff or user.is_superuser:
+        user_uuid = None  # No filtering
+    else:
+        user_uuid = user.uuid  # Filter by owner
+    
+    items = DataProvider.items(
+        owner_uuid=user_uuid,
+        search=search,
+        status=status,
+        page_token=page_token,
+        max_results=max_results,
+    )
+    
+    return cls.action(
+        Action.prepare_api_output(
+            items.items,
+            items.next_page_token,
+            items.previous_page_token,
+            items.total_results,
+        )
+    )
+```
+
+## Error Response Helpers
+
+Available from `Handler` base class:
+```python
+# 401 Unauthorized
+cls.unauthorized(["User not authenticated"])
+
+# 403 Forbidden
+cls.forbidden(["Access denied: You can only access your own data"])
+
+# 400 Bad Request
+cls.bad_request(["Invalid input data"])
+
+# 404 Not Found
+cls.not_found(["Item not found"])
+
+# 422 Unprocessable Entity
+cls.unprocessable_entity(["Validation failed"])
+
+# 500 Internal Server Error
+cls.error(["Something went wrong"])
+
+# Custom response
+cls.action(
+    output=data,
+    error=False,
+    http_response_code=200,
+    error_messages=[],
+)
+```
+
+## Response Formatting
+
+### Single Item Response
+```python
+item = DataProvider.item(uuid=item_uuid)
+item_dict = item.api_response(add_statistics=True)
+return cls.action(item_dict)
+
+# Or using prepare_api_single_output
+return cls.action(Action.prepare_api_single_output(item, add_statistics=True))
+```
+
+### List Response
+```python
+items = DataProvider.items(...)
+
+# Convert to API responses
+item_responses = []
+for item in items.items:
+    item_responses.append(item.api_response(add_statistics=True))
+
+return cls.action(
+    Action.prepare_api_output(
+        item_responses,
+        items.next_page_token,
+        items.previous_page_token,
+        items.total_results,
+    )
+)
+
+# Or directly with items (if they have api_response method)
+return cls.action(
+    Action.prepare_api_output(
+        items.items,
+        items.next_page_token,
+        items.previous_page_token,
+        items.total_results,
+        add_statistics=True,  # Pass kwargs to api_response
+    )
+)
+```
+
+## Logging in Handlers
+
+Use LogUtil for important operations:
+```python
+from app.utils.log_util import LogUtil
+
+@classmethod
+def complex_operation(cls, user: User | None = None) -> Action:
+    logger = LogUtil.get_logger()
+    
+    if not user or user.is_anonymous:
+        logger.warning("Unauthorized access attempt", extra={"code": 123456})
+        return cls.unauthorized(["User not authenticated"])
+    
+    logger.info(
+        f"Starting complex operation for user: {user.email}",
+        extra={"code": 234567}
+    )
+    
+    try:
+        # Operation logic
+        result = perform_operation()
+        logger.info("Operation completed successfully", extra={"code": 345678})
+        return cls.action(result)
+    except Exception as e:
+        logger.error(f"Operation failed: {str(e)}", extra={"code": 456789})
+        return cls.error(["Operation failed"])
+```
+
+## Update Pattern with Whitelisting
+
+**Always whitelist allowed fields** to prevent unauthorized updates:
+```python
+@classmethod
+def update_item(cls, user: User | None = None, item_uuid: str = None, data: dict = None) -> Action:
+    # ... authentication and authorization checks ...
+    
+    # Whitelist updatable fields
+    if "name" in data:
+        item.name = data["name"]
+    
+    if "status" in data:
+        # Validate enum values if needed
+        if data["status"] in Item.STATUSES.values:
+            item.status = data["status"]
+    
+    if "notes" in data:
+        item.notes = data["notes"]
+    
+    # Only save if something was actually updated
+    if any(field in data for field in ["name", "status", "notes"]):
+        item.save()
+    
+    return cls.action(item.api_response())
+```
+
+## Delete Pattern
+
+Prefer soft delete (already handled by BaseModel):
+```python
+@classmethod
+def delete_item(cls, user: User | None = None, item_uuid: str = None) -> Action:
+    if not user or user.is_anonymous:
+        return cls.unauthorized(["User not authenticated"])
+    
+    item = DataProvider.item(uuid=item_uuid)
+    if not item:
+        return cls.not_found(["Item not found"])
+    
+    # Authorization check
+    if not (user.is_staff or user.is_superuser):
+        if item.owner_uuid != user.uuid:
+            return cls.forbidden(["Access denied"])
+    
+    # Soft delete (sets deleted_at timestamp)
+    item.delete()  # or item.deleted_at = timezone.now(); item.save()
+    
+    return cls.action({"message": "Item deleted successfully"})
+```

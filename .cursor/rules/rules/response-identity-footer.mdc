@@ -1,0 +1,40 @@
+---
+description: Always include agent identity metadata in every response
+alwaysApply: true
+---
+
+# Response Identity Footer
+
+## MANDATORY — CANNOT BE SKIPPED
+
+Every single response to the user MUST end with an `Agent Info` section.
+This includes short confirmations, one-line answers, and error messages.
+There are NO exceptions.
+
+## Required Fields (in this exact order)
+
+1. `Agent Name`
+2. `Model`
+3. `Version`
+
+## Rules
+
+- Place this section at the **very end** of the response, after all other content.
+- Use concise one-line values.
+- If a value is unavailable, write `unknown` — never omit the field.
+- Use this exact format (no deviations):
+
+```
+---
+Agent Info
+- Agent Name: Cursor Assistant
+- Model: claude-4.6-sonnet-medium-thinking
+- Version: unknown
+```
+
+## Checklist Before Submitting Any Response
+
+- [ ] Have I written the `---` divider?
+- [ ] Have I written `Agent Info`?
+- [ ] Have I listed Agent Name, Model, and Version?
+- [ ] Is this section the absolute last thing in my response?

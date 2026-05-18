@@ -1,0 +1,354 @@
+---
+globs: app/models/*.py
+---
+
+# Django Models Patterns
+
+Reference: [app/models/base_model.py](mdc:app/models/base_model.py), [app/models/user.py](mdc:app/models/user.py), [app/models/project.py](mdc:app/models/project.py)
+
+## Base Model Requirements
+
+### All models MUST inherit from BaseModel
+```python
+from app.models.base_model import BaseModel
+
+class MyModel(BaseModel):
+    # Fields here
+    pass
+```
+
+**BaseModel provides:**
+- UUID as primary key (not auto-incrementing IDs)
+- Soft delete functionality (`deleted_at` field)
+- Timestamp fields (`created_at`, `updated_at`)
+- `api_response()` method for API serialization
+- Attachment file management
+
+## Model Structure Template
+
+```python
+from django.db import models
+from django.db.models.enums import TextChoices
+from app.models.base_model import BaseModel
+from app.models.base_api_model import BaseApiModel
+
+class MyModel(BaseModel):
+    """Brief description of the model."""
+    
+    class DatabaseFields:
+        """Field name constants for database access."""
+        uuid = "uuid"
+        created_at = "created_at"
+        updated_at = "updated_at"
+        name = "name"
+        status = "status"
+        deleted_at = "deleted_at"
+    
+    class STATUSES(TextChoices):
+        """Status choices for this model."""
+        ACTIVE = "ACTIVE"
+        INACTIVE = "INACTIVE"
+    
+    class RESPONSE_FIELDS:
+        """Field names for API responses."""
+        name = "name"
+        status = "status"
+        statistics = "statistics"
+    
+    # Database fields
+    name = models.CharField(
+        max_length=256,
+        db_index=True,
+        db_comment="Name of the entity",
+        null=False
+    )
+    status = models.CharField(
+        max_length=64,
+        choices=STATUSES.choices,
+        default=STATUSES.ACTIVE,
+        db_index=True,
+        db_comment="Current status",
+        null=False
+    )
+    
+    class Meta:
+        verbose_name = "My Model"
+        verbose_name_plural = "My Models"
+        db_table = "my_models"
+        db_table_comment = "Description of table"
+        ordering = ["created_at"]
+        get_latest_by = "created_at"
+        indexes = [
+            models.Index(fields=["name"], name="mymodel_name_idx"),
+        ]
+    
+    def __str__(self):
+        return self.name
+    
+    def api_response(
+        self,
+        add_statistics: bool = False,
+        other_properties: dict | None = None,
+        **kwargs
+    ) -> dict:
+        """
+        Generate API response dictionary.
+        
+        Args:
+            add_statistics: Whether to include statistics
+            other_properties: Additional properties to include
+            **kwargs: Additional arguments
+        
+        Returns:
+            dict: API response dictionary
+        """
+        properties = {
+            BaseModel.RESPONSE_FIELDS.type: self.__class__.__name__,
+            self.RESPONSE_FIELDS.name: self.name,
+            self.RESPONSE_FIELDS.status: self.status,
+        }
+        
+        if add_statistics:
+            properties[self.RESPONSE_FIELDS.statistics] = self.get_statistics()
+        
+        return super().api_response(properties, **kwargs)
+    
+    @classmethod
+    def api_response_schema(
+        cls,
+        add_statistics: bool = False,
+        other_properties: dict | None = None,
+        **kwargs
+    ) -> dict:
+        """
+        Generate OpenAPI schema for API response.
+        
+        Args:
+            add_statistics: Whether to include statistics schema
+            other_properties: Additional properties for schema
+            **kwargs: Additional arguments
+        
+        Returns:
+            dict: OpenAPI schema dictionary
+        """
+        properties = {
+            **(other_properties or {}),
+            BaseApiModel.RESPONSE_FIELDS.type: {
+                "type": "string",
+                "title": "Item Type",
+                "description": "Type of the item",
+                "readonly": True,
+                "required": True,
+                "nullable": False,
+                "example": cls.__name__,
+            },
+            cls.RESPONSE_FIELDS.name: {
+                "type": "string",
+                "title": "Name",
+                "description": "Name of the entity",
+                "readonly": False,
+                "required": True,
+                "nullable": False,
+                "example": "Example Name",
+            },
+            cls.RESPONSE_FIELDS.status: {
+                "type": "string",
+                "title": "Status",
+                "description": "Current status",
+                "enum": cls.STATUSES.values,
+                "readonly": False,
+                "required": True,
+                "nullable": False,
+                "example": cls.STATUSES.ACTIVE.value,
+            },
+        }
+        
+        if add_statistics:
+            properties[cls.RESPONSE_FIELDS.statistics] = {
+                "type": "object",
+                "title": "Statistics",
+                "description": "Entity statistics",
+                # Add specific statistics properties
+            }
+        
+        return super().api_response_schema(properties, **kwargs)
+```
+
+## Field Conventions
+
+### Primary Key
+- **Always use UUID** as primary key (provided by BaseModel)
+- Never use auto-incrementing integer IDs
+
+### Field Definitions
+```python
+# String fields
+name = models.CharField(
+    max_length=256,
+    db_index=True,          # Index for frequently queried fields
+    db_comment="Description",  # Always add comments
+    null=False,
+    unique=True             # If uniqueness required
+)
+
+# Foreign Keys
+owner = models.ForeignKey(
+    User,
+    on_delete=models.CASCADE,  # or SET_NULL, PROTECT as appropriate
+    db_index=True,
+    db_comment="Owner of the entity",
+    null=True,
+    related_name="owned_entities"  # Always set related_name
+)
+
+# Timestamps
+# Use db_default=Now() when you want database-level defaults
+started_at = models.DateTimeField(
+    db_index=True,
+    db_comment="Start timestamp",
+    null=True,
+    db_default=None  # Or db_default=Now() for current time
+)
+
+# JSON fields
+metadata = models.JSONField(
+    null=True,
+    db_comment="Additional metadata"
+)
+
+# Choices
+status = models.CharField(
+    max_length=64,
+    choices=STATUSES.choices,
+    default=STATUSES.ACTIVE,
+    db_default=STATUSES.ACTIVE,  # Database-level default
+    db_index=True,
+    null=False
+)
+```
+
+### Indexes
+Add indexes for frequently queried fields:
+```python
+class Meta:
+    indexes = [
+        models.Index(fields=["name"], name="entity_name_idx"),
+        models.Index(fields=["status", "created_at"], name="entity_status_created_idx"),
+    ]
+```
+
+## Soft Delete
+
+Models automatically support soft delete via BaseModel:
+```python
+# Soft delete (sets deleted_at)
+instance.delete()
+
+# Hard delete (permanent removal)
+instance.hard_delete()
+
+# Restore soft-deleted
+instance.restore()
+
+# Query non-deleted (default)
+MyModel.objects.all()  # Excludes soft-deleted
+
+# Query all including deleted
+MyModel.objects.all_with_deleted()
+
+# Query only deleted
+MyModel.objects.only_deleted()
+```
+
+## API Response Methods
+
+### Required Methods
+Every model **must implement**:
+1. `api_response()` - instance method for serialization
+2. `api_response_schema()` - class method for OpenAPI schema
+
+### Patterns for Related Objects
+```python
+def api_response(
+    self,
+    add_owner_info: bool = False,
+    add_statistics: bool = False,
+    other_properties: dict | None = None,
+    **kwargs
+) -> dict:
+    properties = {
+        self.RESPONSE_FIELDS.name: self.name,
+    }
+    
+    # Conditionally include related objects
+    if add_owner_info and self.owner:
+        properties[self.RESPONSE_FIELDS.owner] = self.owner.api_response(**kwargs)
+    
+    # Conditionally include computed data
+    if add_statistics:
+        properties[self.RESPONSE_FIELDS.statistics] = self.get_statistics()
+    
+    return super().api_response(properties, **kwargs)
+```
+
+## Statistics Methods
+
+For models requiring computed statistics:
+```python
+def get_statistics(self) -> dict:
+    """
+    Calculate entity statistics.
+    
+    Returns:
+        dict: Dictionary containing statistics
+    """
+    # Perform queries and calculations
+    total_count = RelatedModel.objects.filter(
+        parent=self,
+        deleted_at__isnull=True
+    ).count()
+    
+    return {
+        'total_count': total_count,
+        'rate': round(rate, 1) if rate else 0,
+    }
+```
+
+## TextChoices Pattern
+
+Use Django's TextChoices for status/enum fields:
+```python
+class STATUSES(TextChoices):
+    ACTIVE = "ACTIVE"
+    INACTIVE = "INACTIVE"
+    DELETED = "DELETED"
+
+class STAGES(TextChoices):
+    PLANNING = "Planning"
+    IN_PROGRESS = "In Progress"
+    COMPLETED = "Completed"
+```
+
+## Common Patterns
+
+### Model Manager Methods
+For complex queries, add manager methods:
+```python
+class MyModelManager(models.Manager):
+    def active(self):
+        """Get only active records."""
+        return self.filter(status=MyModel.STATUSES.ACTIVE, deleted_at__isnull=True)
+
+class MyModel(BaseModel):
+    objects = MyModelManager()
+```
+
+### Related Object Access
+Always use `related_name` for reverse relationships:
+```python
+# In User model:
+owned_projects = models.ForeignKey(..., related_name="owned_projects")
+
+# Access from user:
+user.owned_projects.all()
+```

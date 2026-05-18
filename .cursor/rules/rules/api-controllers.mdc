@@ -1,0 +1,397 @@
+---
+globs: app/controllers/*.py,app/routes/*.py
+---
+
+# API Controllers and Endpoints Patterns
+
+Reference: [app/controllers/api_controller.py](mdc:app/controllers/api_controller.py), [app/routes/api.py](mdc:app/routes/api.py)
+
+## Controller Template
+
+```python
+from rest_framework.decorators import api_view, permission_classes, throttle_classes
+from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import OpenApiParameter, extend_schema
+
+from app.actions.action import Action
+from app.handlers.api_handler import ApiHandler
+from app.utils.throttling import AnonRateThrottle, UserRateThrottle
+from app.models.mymodel import MyModel
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name='search',
+            type=str,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description='Search term for filtering'
+        ),
+        OpenApiParameter(
+            name='page_token',
+            type=str,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description='Pagination token'
+        ),
+        OpenApiParameter(
+            name='max_results',
+            type=int,
+            location=OpenApiParameter.QUERY,
+            required=False,
+            description='Maximum number of results (default: 10)'
+        ),
+    ],
+    responses={200: Action.generate_schema(MyModel.api_response_schema())},
+    examples=[],
+    description="Returns a list of items",
+)
+@api_view(["GET"])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
+@permission_classes([IsAuthenticated])
+def list_items(request):
+    """List items endpoint."""
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    
+    # Extract query parameters
+    search = request.GET.get('search')
+    page_token = request.GET.get('page_token')
+    max_results = request.GET.get('max_results')
+    
+    # Convert to int if needed
+    if max_results is not None:
+        try:
+            max_results = int(max_results)
+        except ValueError:
+            max_results = 10
+    else:
+        max_results = 10
+    
+    return ApiHandler.list_items(
+        current_user, search, page_token, max_results
+    ).json_response()
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name='item_uuid',
+            type=str,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='Item UUID'
+        )
+    ],
+    responses={200: Action.generate_schema(MyModel.api_response_schema())},
+    examples=[],
+    description="Get item details by UUID",
+)
+@api_view(["GET"])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
+@permission_classes([IsAuthenticated])
+def item_detail(request, item_uuid):
+    """Get item detail endpoint."""
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    return ApiHandler.item_detail(current_user, item_uuid).json_response()
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name='item_uuid',
+            type=str,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='Item UUID'
+        )
+    ],
+    request={
+        'application/json': {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string', 'description': 'Item name'},
+                'status': {
+                    'type': 'string',
+                    'enum': ['ACTIVE', 'INACTIVE'],
+                    'description': 'Item status'
+                },
+                'notes': {'type': 'string', 'description': 'Item notes'}
+            }
+        }
+    },
+    responses={200: Action.generate_schema(MyModel.api_response_schema())},
+    examples=[],
+    description="Update item by UUID",
+)
+@api_view(["PATCH"])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
+@permission_classes([IsAuthenticated])
+def item_update(request, item_uuid):
+    """Update item endpoint."""
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    return ApiHandler.update_item(current_user, item_uuid, request.data).json_response()
+
+
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name='item_uuid',
+            type=str,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='Item UUID'
+        )
+    ],
+    responses={
+        204: {
+            "type": "object",
+            "properties": {
+                "message": {"type": "string", "description": "Success message"}
+            }
+        }
+    },
+    examples=[],
+    description="Delete item by UUID",
+)
+@api_view(["DELETE"])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
+@permission_classes([IsAuthenticated])
+def item_delete(request, item_uuid):
+    """Delete item endpoint."""
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    return ApiHandler.delete_item(current_user, item_uuid).json_response()
+```
+
+## Mandatory Decorators
+
+### All endpoints MUST have:
+1. `@extend_schema()` - OpenAPI documentation
+2. `@api_view([...])` - HTTP methods allowed
+3. `@throttle_classes([AnonRateThrottle, UserRateThrottle])` - Rate limiting
+4. `@permission_classes([IsAuthenticated])` - Authentication required
+
+### Order of decorators (top to bottom):
+```python
+@extend_schema(...)
+@api_view(["GET"])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
+@permission_classes([IsAuthenticated])
+def my_endpoint(request):
+    pass
+```
+
+## User Access Pattern
+
+**ALWAYS use this exact pattern:**
+```python
+def my_endpoint(request):
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    # Pass to handler
+    return ApiHandler.method(current_user).json_response()
+```
+
+This supports impersonation functionality across the entire application.
+
+## Parameter Extraction
+
+### Query Parameters (GET)
+```python
+# Simple parameters
+search = request.GET.get('search')
+page_token = request.GET.get('page_token')
+
+# Boolean parameters
+add_statistics = request.GET.get('add_statistics', 'false').lower() == 'true'
+
+# Integer parameters with validation
+max_results = request.GET.get('max_results')
+if max_results is not None:
+    try:
+        max_results = int(max_results)
+    except ValueError:
+        max_results = 10  # Default
+else:
+    max_results = 10
+
+# Multi-value parameters (arrays)
+def parse_multi(key):
+    """Parse multi-value query parameters."""
+    # Try standard format
+    vals = request.GET.getlist(key)
+    if vals:
+        return vals
+    
+    # Try with [] suffix (frontend format)
+    vals = request.GET.getlist(f"{key}[]")
+    if vals:
+        return vals
+    
+    # Try single value with comma separation
+    val = request.GET.get(key)
+    if val and ',' in val:
+        return val.split(',')
+    
+    return []
+
+project_uuids = parse_multi("project")
+```
+
+### Body Parameters (POST, PATCH, PUT)
+```python
+def my_endpoint(request):
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    
+    # Extract from request body
+    name = request.data.get("name")
+    status = request.data.get("status")
+    notes = request.data.get("notes")
+    
+    # Validate required fields in handler
+    return ApiHandler.update_item(
+        current_user, name, status, notes
+    ).json_response()
+```
+
+### Path Parameters
+```python
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def item_detail(request, item_uuid):  # Path parameter
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    return ApiHandler.item_detail(current_user, item_uuid).json_response()
+```
+
+## OpenAPI Schema Patterns
+
+### List Endpoints
+```python
+@extend_schema(
+    parameters=[
+        OpenApiParameter(name='search', type=str, ...),
+        OpenApiParameter(name='page_token', type=str, ...),
+        OpenApiParameter(name='max_results', type=int, ...),
+    ],
+    responses={200: Action.generate_schema(MyModel.api_response_schema())},
+    description="Returns a list of items",
+)
+```
+
+### Detail Endpoints
+```python
+@extend_schema(
+    parameters=[
+        OpenApiParameter(
+            name='item_uuid',
+            type=str,
+            location=OpenApiParameter.PATH,
+            required=True,
+            description='Item UUID'
+        )
+    ],
+    responses={200: Action.generate_schema(MyModel.api_response_schema())},
+    description="Get item details",
+)
+```
+
+### Update Endpoints
+```python
+@extend_schema(
+    request={
+        'application/json': {
+            'type': 'object',
+            'properties': {
+                'name': {'type': 'string', 'description': 'Name'},
+                'status': {
+                    'type': 'string',
+                    'enum': ['ACTIVE', 'INACTIVE'],
+                    'description': 'Status'
+                }
+            }
+        }
+    },
+    responses={200: Action.generate_schema(MyModel.api_response_schema())},
+    description="Update item",
+)
+```
+
+### Array Parameters in Schema
+```python
+OpenApiParameter(
+    name='items',
+    type={'type': 'array', 'items': {'type': 'string'}},
+    location=OpenApiParameter.QUERY,
+    required=False,
+    description='Item UUIDs (multi-select)'
+)
+```
+
+## URL Routing
+
+In `app/routes/*.py`:
+```python
+from django.urls import path
+from app.controllers import api_controller
+
+urlpatterns = [
+    path('items/', api_controller.list_items, name='items_list'),
+    path('items/<str:item_uuid>/', api_controller.item_detail, name='item_detail'),
+    path('items/<str:item_uuid>/update/', api_controller.item_update, name='item_update'),
+    path('items/<str:item_uuid>/delete/', api_controller.item_delete, name='item_delete'),
+]
+```
+
+## Common Patterns
+
+### File Upload Endpoints
+```python
+@extend_schema(
+    request={
+        'multipart/form-data': {
+            'type': 'object',
+            'properties': {
+                'file': {'type': 'string', 'format': 'binary', 'description': 'File to upload'}
+            }
+        }
+    },
+    responses={200: Action.generate_schema(MyModel.api_response_schema())},
+    description="Upload file",
+)
+@api_view(["POST"])
+@throttle_classes([AnonRateThrottle, UserRateThrottle])
+@permission_classes([IsAuthenticated])
+def upload_file(request):
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    file = request.FILES.get("file")
+    
+    if not file:
+        return ApiHandler.bad_request(["File is required"]).json_response()
+    
+    return ApiHandler.handle_file_upload(current_user, file).json_response()
+```
+
+### Serializer Validation (Optional)
+For complex validation, use DRF serializers:
+```python
+from rest_framework import serializers
+
+class ItemQuerySerializer(serializers.Serializer):
+    search = serializers.CharField(required=False)
+    status = serializers.ChoiceField(choices=["ACTIVE", "INACTIVE"], required=False)
+    date_from = serializers.DateField(required=False)
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def list_items(request):
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    
+    # Validate query parameters
+    serializer = ItemQuerySerializer(data=request.GET)
+    if not serializer.is_valid():
+        return ApiHandler.bad_request(serializer.errors).json_response()
+    
+    # Use validated data
+    return ApiHandler.list_items(
+        current_user, **serializer.validated_data
+    ).json_response()
+```

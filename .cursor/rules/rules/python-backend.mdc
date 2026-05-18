@@ -1,0 +1,203 @@
+---
+globs: *.py
+---
+
+# Python Backend Patterns
+
+## Code Style & Formatting
+
+### Black Formatter Settings
+Use Black with these specific settings:
+```bash
+black --line-length 120 --skip-magic-trailing-comma --skip-string-normalization
+```
+
+### Import Organization
+Follow this order strictly:
+```python
+# 1. Future imports (if needed)
+from __future__ import annotations
+
+# 2. Standard library
+import json
+from typing import Dict, Optional
+
+# 3. Django imports
+from django.db import models
+from django.http import JsonResponse
+
+# 4. Third-party packages
+from rest_framework.decorators import api_view
+from pydantic import BaseModel
+
+# 5. Local application imports
+from app.models.user import User
+from app.handlers.api_handler import ApiHandler
+from app.utils.log_util import LogUtil
+```
+
+### Type Hints
+- **Always use type hints** for function parameters and return values
+- Use `Optional[Type]` or `Type | None` for nullable types
+- Use `list[Type]` and `dict[Key, Value]` instead of `List[Type]` and `Dict[Key, Value]`
+
+Example:
+```python
+def get_user(user_uuid: str | None = None) -> User | None:
+    """Get user by UUID."""
+    if not user_uuid:
+        return None
+    return User.objects.filter(uuid=user_uuid).first()
+```
+
+## Logging Patterns
+
+### Using LogUtil
+**Always use `LogUtil.get_logger()` for logging:**
+```python
+from app.utils.log_util import LogUtil
+
+logger = LogUtil.get_logger()
+logger.info("Starting sync", extra={"code": 923440})
+logger.warning("Failed to fetch data", extra={"code": 284322})
+logger.error("Critical error occurred", extra={"code": 156789})
+```
+
+### Error Codes
+- Include `extra={"code": XXXXX}` with every log statement
+- Code is a **random 6-digit number** combining:
+  - Current line number
+  - Beginning of function line number
+- Example: Line 78 in function starting at line 65 → `extra={"code": 786500}` or similar random combination
+
+## Error Handling
+
+### Handler Pattern
+All handlers **must return `Action` objects**:
+```python
+from app.actions.action import Action
+from app.handlers.handler import Handler
+
+class ApiHandler(Handler):
+    @classmethod
+    def get_projects(cls, user: User | None = None) -> Action:
+        if not user or user.is_anonymous:
+            return cls.unauthorized(["User not authenticated"])
+        
+        if not user.is_staff:
+            return cls.forbidden(["Access denied"])
+        
+        projects = DataProvider.projects()
+        return cls.action(Action.prepare_api_output(projects.items))
+```
+
+### Error Messages
+- Always use **lists** for error messages: `["Error message"]`
+- Use descriptive, user-friendly messages
+- Available error methods from `Handler` class:
+  - `cls.unauthorized(["message"])`
+  - `cls.forbidden(["message"])`
+  - `cls.bad_request(["message"])`
+  - `cls.not_found(["message"])`
+  - `cls.unprocessable_entity(["message"])`
+  - `cls.error(["message"])` - for 500 errors
+
+## Access Control Pattern
+
+### User Access in Controllers
+**Always use this exact pattern in controllers:**
+```python
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def endpoint_name(request):
+    current_user = getattr(request, 'impersonated_user', None) or request.user
+    return ApiHandler.method(current_user).json_response()
+```
+
+### Authorization in Handlers
+```python
+@classmethod
+def method(cls, user: User | None = None) -> Action:
+    # Always check authentication first
+    if not user or user.is_anonymous:
+        return cls.unauthorized(["User not authenticated"])
+    
+    # Admin/staff can access everything
+    if user.is_staff or user.is_superuser:
+        # Full access logic
+        pass
+    else:
+        # Regular users only access their own data
+        # Check ownership before allowing access
+        if resource.owner_uuid != user.uuid:
+            return cls.forbidden(["Access denied: You can only access your own resources"])
+```
+
+## Docstring Patterns
+
+Use detailed Google-style docstrings for complex functions:
+```python
+def sync_linkedin_messages(
+    self, before: datetime, after: datetime, run_now: bool = True
+) -> bool:
+    """
+    Syncs LinkedIn messages for the user within the specified date range.
+
+    Parameters:
+    before (datetime): The end date for syncing messages.
+    after (datetime): The start date for syncing messages.
+    run_now (bool, optional): Whether to run the sync immediately. Defaults to True.
+
+    Returns:
+    bool: True if the sync is successful, False otherwise.
+    """
+    # Implementation
+```
+
+For simple functions, single-line docstrings are acceptable:
+```python
+def get_user(uuid: str) -> User | None:
+    """Get user by UUID."""
+    return User.objects.filter(uuid=uuid).first()
+```
+
+## Class Organization
+
+### Inner Classes Pattern
+Use inner classes for constants and field definitions:
+```python
+class MyModel(BaseModel):
+    class DatabaseFields:
+        uuid = "uuid"
+        name = "name"
+        status = "status"
+    
+    class STATUSES(TextChoices):
+        ACTIVE = "ACTIVE"
+        INACTIVE = "INACTIVE"
+    
+    class RESPONSE_FIELDS:
+        name = "name"
+        status = "status"
+```
+
+## Provider Classes
+
+Provider classes should:
+- Be organized in `app/modules/`
+- Use class methods (`@classmethod`)
+- Handle external service integrations
+- Return typed data models or `None`
+
+Example:
+```python
+class DataProvider:
+    @classmethod
+    def user(cls, uuid: str | None = None, email: str | None = None) -> User | None:
+        """Get user by UUID or email."""
+        if uuid:
+            return User.objects.filter(uuid=uuid).first()
+        if email:
+            return User.objects.filter(email=email).first()
+        return None
+```

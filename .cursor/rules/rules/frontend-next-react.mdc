@@ -1,0 +1,414 @@
+---
+description: Next.js + React + TypeScript frontend rules (App Router, MUI, React Query)
+globs: ui/src/**/*.tsx,ui/src/**/*.ts
+alwaysApply: false
+---
+
+# Frontend Next.js + React/TypeScript Patterns
+
+## Core Principles
+
+- **App Router only**: Build with Next.js App Router (`app/`). Do not add `pages/` routes.
+- **Future-first**: Keep only modern Next.js patterns; remove legacy or transitional guidance.
+- **TypeScript strictness**: Avoid `any`; prefer explicit types and inferred return types.
+- **Material-UI only for UI primitives**: Use Material UI components for form controls, interactive elements, layout blocks, and feedback UI. Do not introduce raw HTML form controls (`input`, `select`, `textarea`, `button`) in `ui/src`.
+- **Server-first rendering**: Prefer Server Components for initial data and page composition.
+- **Client components for interactivity**: Use `"use client"` only where hooks, browser APIs, or user interaction require it.
+
+## App Router Structure
+
+```txt
+ui/src/
+  app/
+    (pages)/
+      page.tsx
+      [slug]/
+        page.tsx
+    (dashboard)/
+      page.tsx
+      layout.tsx
+      loading.tsx
+      error.tsx
+    api/
+      feature/route.ts
+    layout.tsx
+  components/
+  layouts/
+    RootLayoutShell.tsx
+  styles/
+    globals.css
+  hooks/
+  lib/
+  api/
+  types/
+  utils/
+```
+
+## Routing and Directory Conventions (Project-Specific)
+
+- Keep Next.js routing in `ui/src/app/` only (App Router).
+- Use `ui/src/app/(pages)/` as the dedicated home for page route files so pages stay separated from shared layout/style files.
+- Keep global/root route shell logic in `ui/src/layouts/` (for example `RootLayoutShell.tsx`) and mount it from `ui/src/app/layout.tsx`.
+- Keep global styles in `ui/src/styles/` and import them from `ui/src/app/layout.tsx`.
+- Do not create `ui/src/pages/` for app content; Next treats it as Pages Router and may create unintended routes.
+
+## Server vs Client Component Rules
+
+### Server Component (default)
+
+- Use async components for initial fetch and view composition.
+- Do not use React client hooks (`useState`, `useEffect`) in Server Components.
+- Keep secrets, privileged calls, and heavy data fetching on the server.
+
+```tsx
+import { getProject } from "@/api/server/projects";
+import { ProjectHeader } from "@/components/ProjectHeader";
+
+interface PageProps {
+  params: { projectId: string };
+}
+
+export default async function ProjectPage({ params }: PageProps) {
+  const project = await getProject(params.projectId);
+  return <ProjectHeader project={project} />;
+}
+```
+
+### Client Component (`"use client"`)
+
+- Add `"use client"` only when required for interactivity.
+- Keep client islands small and focused.
+- Prefer passing ready-to-render data from server to client components.
+
+```tsx
+"use client";
+
+import { useState } from "react";
+import { Button } from "@mui/material";
+
+export function ToggleDetails() {
+  const [open, setOpen] = useState(false);
+  return <Button onClick={() => setOpen((prev) => !prev)}>Toggle</Button>;
+}
+```
+
+## Data Fetching Best Practices (Next + React Query)
+
+- **Initial page data**: fetch in Server Components.
+- **Client-side mutations**: use React Query `useMutation`.
+- **Client-side query sync/live updates**: use React Query `useQuery` only where a client component needs dynamic updates after hydration.
+- **Cache coherence**: when mutating, invalidate relevant React Query keys and trigger server revalidation flow where applicable.
+
+### Server Fetch Example
+
+```tsx
+import { getItems } from "@/api/server/items";
+
+export default async function ItemsPage() {
+  const items = await getItems();
+  return <ItemsList items={items} />;
+}
+```
+
+### Client Mutation Example
+
+```tsx
+"use client";
+
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { ItemUpdateData } from "@/types/items";
+import { apiClient } from "@/api/client";
+
+export function useUpdateItem(itemKey: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (data: ItemUpdateData) => apiClient.updateItem(itemKey, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["item", itemKey] });
+      queryClient.invalidateQueries({ queryKey: ["items"] });
+    },
+  });
+}
+```
+
+## TypeScript Rules
+
+- Do not use `React.FC`; type props directly.
+- Do not use `any`; use specific event/types (`SelectChangeEvent`, `unknown`, typed error model).
+- Keep domain types in `ui/src/types/`.
+- Use discriminated unions for status/state variants.
+
+```tsx
+interface ItemCardProps {
+  name: string;
+  status: "ACTIVE" | "INACTIVE";
+}
+
+export function ItemCard({ name, status }: ItemCardProps) {
+  return <div>{name} - {status}</div>;
+}
+```
+
+## Material-UI Usage Rules
+
+- Use MUI components for layout and controls (`Box`, `Stack`, `Card`, `Typography`, `TextField`, `Button`, `FormControl`, `Select`, `Switch`, `Alert`, etc.).
+- Prefer `sx` for local styling; extract reusable styling patterns to shared components when repeated.
+- Keep `main` and `section` for route-level semantics only; inside forms and interactive UI, use Material UI components exclusively.
+
+```tsx
+import { Box, Card, CardContent, Typography } from "@mui/material";
+
+export function SummaryCard() {
+  return (
+    <section aria-label="summary">
+      <Card>
+        <CardContent>
+          <Typography variant="h6">Summary</Typography>
+          <Box sx={{ mt: 1 }}>Content</Box>
+        </CardContent>
+      </Card>
+    </section>
+  );
+}
+```
+
+## Settings Component Template (Inlined)
+
+Use this pattern for settings/edit forms in client components.
+
+### 1) Required Imports
+
+```tsx
+"use client";
+
+import { useEffect, useState } from "react";
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardActions,
+  CardContent,
+  CircularProgress,
+  FormControl,
+  InputLabel,
+  MenuItem,
+  Select,
+  TextField,
+  Typography,
+} from "@mui/material";
+import type { SelectChangeEvent } from "@mui/material/Select";
+import { Save as SaveIcon } from "@mui/icons-material";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+```
+
+### 2) Interfaces
+
+```tsx
+interface ItemSettingsProps {
+  item: ItemType;
+}
+
+interface ItemUpdateData {
+  name: string;
+  status: string;
+  notes: string;
+}
+
+interface FormErrors {
+  name?: string;
+  status?: string;
+  notes?: string;
+}
+```
+
+### 3) Component Structure
+
+```tsx
+export function ItemSettings({ item }: ItemSettingsProps) {
+  const queryClient = useQueryClient();
+
+  const [formData, setFormData] = useState<ItemUpdateData>({
+    name: item.name ?? "",
+    status: item.status ?? "ACTIVE",
+    notes: item.notes ?? "",
+  });
+  const [hasChanges, setHasChanges] = useState(false);
+  const [errors, setErrors] = useState<FormErrors>({});
+
+  useEffect(() => {
+    setFormData({
+      name: item.name ?? "",
+      status: item.status ?? "ACTIVE",
+      notes: item.notes ?? "",
+    });
+    setHasChanges(false);
+    setErrors({});
+  }, [item]);
+
+  useEffect(() => {
+    const changed =
+      formData.name !== (item.name ?? "") ||
+      formData.status !== (item.status ?? "ACTIVE") ||
+      formData.notes !== (item.notes ?? "");
+    setHasChanges(changed);
+  }, [formData, item]);
+
+  const validateForm = (): FormErrors => {
+    const nextErrors: FormErrors = {};
+    if (!formData.name.trim()) nextErrors.name = "Name is required";
+    if (!formData.status) nextErrors.status = "Status is required";
+    if (formData.notes.length > 5000) nextErrors.notes = "Notes cannot exceed 5000 characters";
+    return nextErrors;
+  };
+
+  const updateItemMutation = useMutation({
+    mutationFn: (data: ItemUpdateData) => apiClient.updateItem(item.key, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["item", item.key] });
+      queryClient.invalidateQueries({ queryKey: ["items"] });
+      setHasChanges(false);
+    },
+  });
+
+  const handleInputChange =
+    (field: keyof ItemUpdateData) =>
+    (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      const { value } = event.target;
+      setFormData((prev) => ({ ...prev, [field]: value }));
+      if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
+    };
+
+  const handleSelectChange =
+    (field: keyof ItemUpdateData) => (event: SelectChangeEvent<string>) => {
+      const value = event.target.value;
+      setFormData((prev) => ({ ...prev, [field]: value }));
+      if (errors[field]) setErrors((prev) => ({ ...prev, [field]: undefined }));
+    };
+
+  const handleSave = () => {
+    if (!hasChanges) return;
+    const formErrors = validateForm();
+    if (Object.keys(formErrors).length > 0) {
+      setErrors(formErrors);
+      return;
+    }
+    setErrors({});
+    updateItemMutation.mutate({
+      ...formData,
+      name: formData.name.trim(),
+    });
+  };
+
+  const handleReset = () => {
+    setFormData({
+      name: item.name ?? "",
+      status: item.status ?? "ACTIVE",
+      notes: item.notes ?? "",
+    });
+    setHasChanges(false);
+    setErrors({});
+  };
+
+  return (
+    <Box component="section" sx={{ p: 3, maxWidth: 800 }}>
+      <Typography variant="h6" sx={{ mb: 3, fontWeight: 600 }}>
+        Item Settings
+      </Typography>
+
+      <Card>
+        <CardContent sx={{ p: 3 }}>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 3 }}>
+            <TextField
+              fullWidth
+              label="Name"
+              value={formData.name}
+              onChange={handleInputChange("name")}
+              disabled={updateItemMutation.isPending}
+              error={Boolean(errors.name)}
+              helperText={errors.name ?? "Enter item name"}
+              required
+            />
+
+            <FormControl fullWidth error={Boolean(errors.status)}>
+              <InputLabel id="status-label">Status *</InputLabel>
+              <Select
+                labelId="status-label"
+                label="Status *"
+                value={formData.status}
+                onChange={handleSelectChange("status")}
+                disabled={updateItemMutation.isPending}
+              >
+                <MenuItem value="ACTIVE">Active</MenuItem>
+                <MenuItem value="INACTIVE">Inactive</MenuItem>
+              </Select>
+            </FormControl>
+
+            <TextField
+              fullWidth
+              label="Notes"
+              multiline
+              rows={10}
+              value={formData.notes}
+              onChange={handleInputChange("notes")}
+              disabled={updateItemMutation.isPending}
+              error={Boolean(errors.notes)}
+              helperText={errors.notes ?? "Additional notes"}
+            />
+          </Box>
+
+          {updateItemMutation.isError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              Failed to update settings. Please try again.
+            </Alert>
+          )}
+
+          {updateItemMutation.isSuccess && !hasChanges && (
+            <Alert severity="success" sx={{ mt: 2 }}>
+              Settings updated successfully.
+            </Alert>
+          )}
+        </CardContent>
+
+        <CardActions sx={{ p: 3, pt: 0, gap: 2 }}>
+          <Button
+            variant="contained"
+            startIcon={
+              updateItemMutation.isPending ? (
+                <CircularProgress size={20} color="inherit" />
+              ) : (
+                <SaveIcon />
+              )
+            }
+            onClick={handleSave}
+            disabled={!hasChanges || updateItemMutation.isPending}
+          >
+            {updateItemMutation.isPending ? "Saving..." : "Save Changes"}
+          </Button>
+
+          <Button
+            variant="outlined"
+            onClick={handleReset}
+            disabled={!hasChanges || updateItemMutation.isPending}
+          >
+            Reset
+          </Button>
+        </CardActions>
+      </Card>
+    </Box>
+  );
+}
+```
+
+## Naming & File Conventions
+
+- Components: PascalCase file and symbol names (`UserSettings.tsx`).
+- Hooks: camelCase with `use` prefix (`useUpdateStream.ts`).
+- Utilities: camelCase file names.
+- Route segments in `app/`: lowercase/kebab-case.
+
+## Keep / Remove Guidance
+
+- Keep rules that improve maintainability and fit App Router + strict TypeScript.
+- Remove rules that rely on `pages/`, `React.FC`, `any`, or generic React-only conventions that conflict with Next.js server/client architecture.

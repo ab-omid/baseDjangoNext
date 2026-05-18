@@ -1,0 +1,12 @@
+FROM python:3.11.9-bookworm
+
+WORKDIR /code
+
+COPY pyproject.toml uv.lock /code/
+RUN pip install --upgrade pip && \
+    pip install uv
+COPY ./ /code
+RUN uv sync --frozen --no-dev
+
+CMD ["uv", "run", "python", "-m", "celery", "--app=PDNR.celery.celery", "worker", "--loglevel=info", "--max-memory-per-child=10000", "--without-gossip", "--without-mingle", "--concurrency=16", "--without-heartbeat", "-E", "-B"]
+

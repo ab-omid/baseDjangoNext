@@ -1,0 +1,43 @@
+version: '3.4'
+
+services:
+  backend:
+    build:
+      context: ./
+      dockerfile: ./docker/backend/Dockerfile
+    command: uv run python manage.py runserver 0.0.0.0:8000
+    volumes:
+      - ./app:/code/app
+      - ./pdnr:/code/pdnr
+      - ./manage.py:/code/manage.py
+      - ./storage:/code/storage
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+    environment:
+      - DB_ENGINE=${DB_ENGINE}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+    env_file:
+      - ./.env
+    networks:
+      - backend-network
+  db:
+    image: postgres:12
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    networks:
+      - backend-network
+volumes:
+  postgres_data:
+networks:
+  backend-network:
+    driver: bridge
